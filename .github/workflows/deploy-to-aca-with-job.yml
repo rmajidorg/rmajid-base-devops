@@ -1,0 +1,135 @@
+name: Deploy Azure Container App
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      resourceGroup:
+        required: true
+        type: string
+      caeName:
+        required: true
+        type: string
+      name:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      image:
+        required: true
+        type: string
+      vars:
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  install-hosted-runner:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Generate token for GitHub App
+        id: generate-token
+        uses: getsentry/action-github-app-token@v2.0.0
+        with:
+          app_id: ${{ secrets.CICD_GHAPP_RUNNER_GROUP_ID }}
+          private_key: ${{ secrets.CICD_GHAPP_RUNNER_GROUP_KEY }}
+      - name: 'Login via Azure CLI'
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      - run: |
+          az config set extension.use_dynamic_install=yes_without_prompt       
+          if az containerapp show -n github-${{ inputs.caeName }} -g "${{ inputs.resourceGroup }}" ; then
+            echo "Runner already exists"
+            az containerapp secret set -g ${{ inputs.resourceGroup}} -n "github-${{ inputs.caeName }}" -s token=${{ steps.generate-token.outputs.token }}
+          else
+            echo "Add runner"
+            az containerapp create -g "${{ inputs.resourceGroup }}" -n "github-${{ inputs.caeName }}" --environment "${{ inputs.caeName }}" --image "agaltier/github-runner:latest" -s token=${{ steps.generate-token.outputs.token }} --env-vars "RUNNER_NAME=github-${{ inputs.caeName }}" "LABELS=${{ inputs.caeName }}" "RUNNER_SCOPE=org" "ORG_NAME=TotalEnergiesCode" "ACCESS_TOKEN=secretref:token" "RUNNER_GROUP=BeMo" --min-replicas 1 --max-replicas 1
+          fi
+  deploy:
+    name: Deploy
+    runs-on:
+      group: BeMo
+      labels: ${{ inputs.caeName }}
+    environment: ${{ inputs.environment }}
+    needs: install-hosted-runner
+    steps:
+      - name: 'Login via Azure CLI'
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      - id: revision
+        name: 'Deploy new revision'
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          
+          oldrevisions=$(az containerapp revision list -n ${{ inputs.name }} -g ${{ inputs.resourceGroup}}  --query "[?properties.trafficWeight==\`0\`].name" -o tsv)
+          
+          for oldrevision in $oldrevisions; do
+            echo "::group::Deactivate old revision"
+            echo "Deactivate old revision named $oldrevision"
+            echo "::endgroup::"
+            az containerapp revision deactivate -g ${{ inputs.resourceGroup}} --revision $oldrevision
+          done
+          
+          currentRevision=$(az containerapp revision list -g ${{ inputs.resourceGroup}} -n ${{ inputs.name }} --query "[?properties.trafficWeight==\`100\`].name" -o tsv)
+          
+          echo "::group::Changing traffic"
+          echo "Changing traffic ingress to 100 percent for revision name $currentRevision"
+          echo "::endgroup::"
+          
+          az containerapp ingress traffic set -g ${{ inputs.resourceGroup}} -n ${{ inputs.name }} --revision-weight "$currentRevision=100"
+          
+          revisionSuffix=`echo "v${{ inputs.version }}r$RANDOM" | tr '[:upper:]' '[:lower:]' | tr -d '.' | tr -d '-' | awk '{gsub(/pullrequest/,"pr",$0)}1'`
+          dockerImage="${{ inputs.image }}"
+          echo "::group::Creating new revision"
+          echo "Creating new revision with suffix $revisionSuffix"
+          echo "::endgroup::"
+          
+          az containerapp revision copy -g ${{ inputs.resourceGroup}} -n ${{ inputs.name }} --image "$dockerImage" --revision-suffix $revisionSuffix
+          
+          newRevision="${{ inputs.name }}--$revisionSuffix"
+          fqdnStaging=$(az containerapp revision list -g ${{ inputs.resourceGroup}} -n ${{ inputs.name }} --query "[?name=='$newRevision'].properties.fqdn" -o tsv)
+          fqdn=$(az containerapp show -g ${{ inputs.resourceGroup}} -n ${{ inputs.name }} --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "newRevision=$newRevision"
+          echo "newRevision=$newRevision" >> $GITHUB_OUTPUT
+          echo "fqdn=$fqdn"
+          echo "fqdn=$fqdn" >> $GITHUB_OUTPUT
+          echo "uri=https://$fqdn"
+          echo "uri=https://$fqdn" >> $GITHUB_OUTPUT
+          echo "fqdnStaging=$fqdnStaging"
+          echo "fqdnStaging=$fqdnStaging" >> $GITHUB_OUTPUT
+          echo "uriStaging=https://$fqdnStaging"
+          echo "uriStaging=https://$fqdnStaging" >> $GITHUB_OUTPUT
+          
+      - name: 'Swap traffic to the new revision'
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          newRevision=${{ steps.revision.outputs.newRevision }}
+          
+          echo "::group::Set Set traffic to new revision"
+          echo "Set traffic to new revision named $newRevision"
+          echo "::endgroup::"
+          
+          az containerapp ingress traffic set -g ${{ inputs.resourceGroup}} -n ${{ inputs.name }} --revision-weight "$newRevision=100"
+          
+          oldrevisions=$(az containerapp revision list -n ${{ inputs.name }} -g ${{ inputs.resourceGroup}}  --query "[?properties.trafficWeight==\`0\`].name" -o tsv)
+          
+          for oldrevision in $oldrevisions; do
+            echo "::group::Deactivate old revision"
+            echo "Deactivate old revision named $oldrevision"
+            echo ::endgroup::"
+            az containerapp revision deactivate -g ${{ inputs.resourceGroup}} --revision $oldrevision
+          done
