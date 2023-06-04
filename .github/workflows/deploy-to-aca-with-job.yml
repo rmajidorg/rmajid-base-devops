@@ -54,7 +54,7 @@ jobs:
             az containerapp secret set -g ${{ inputs.resourceGroup}} -n "github-${{ inputs.caeName }}" -s token=${{ steps.generate-token.outputs.token }}
           else
             echo "Add runner"
-            az containerapp create -g "${{ inputs.resourceGroup }}" -n "github-${{ inputs.caeName }}" --environment "${{ inputs.caeName }}" --image "agaltier/github-runner:latest" -s token=${{ steps.generate-token.outputs.token }} --env-vars "RUNNER_NAME=github-${{ inputs.caeName }}" "LABELS=${{ inputs.caeName }}" "RUNNER_SCOPE=org" "ORG_NAME=TotalEnergiesCode" "ACCESS_TOKEN=secretref:token" "RUNNER_GROUP=BeMo" --min-replicas 1 --max-replicas 1
+            az containerapp create -g "${{ inputs.resourceGroup }}" -n "github-${{ inputs.caeName }}" --environment "${{ inputs.caeName }}" --image "agaltier/github-runner:latest" -s token=${{ steps.generate-token.outputs.token }} --env-vars "RUNNER_NAME=github-${{ inputs.caeName }}" "LABELS=${{ inputs.caeName }}" "RUNNER_SCOPE=org" "ORG_NAME=TotalEnergiesCode" "ACCESS_TOKEN=secretref:token" "RUNNER_GROUP=RmajidSelfHosted" --min-replicas 1 --max-replicas 1
           fi
   deploy:
     name: Deploy
