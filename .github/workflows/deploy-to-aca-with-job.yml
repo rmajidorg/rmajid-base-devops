@@ -59,7 +59,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on:
-      group: BeMo
+      group: RmajidSelfHosted
       labels: ${{ inputs.caeName }}
     environment: ${{ inputs.environment }}
     needs: install-hosted-runner
