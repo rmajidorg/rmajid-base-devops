@@ -39,8 +39,8 @@ jobs:
         id: generate-token
         uses: getsentry/action-github-app-token@v2.0.0
         with:
-          app_id: ${{ secrets.CICD_GHAPP_RUNNER_GROUP_ID }}
-          private_key: ${{ secrets.CICD_GHAPP_RUNNER_GROUP_KEY }}
+          app_id: ${{ secrets.RUNNER_GROUP_ID }}
+          private_key: ${{ secrets.RUNNER_GROUP_KEY }}
       - name: 'Login via Azure CLI'
         uses: azure/login@v1
         with:
